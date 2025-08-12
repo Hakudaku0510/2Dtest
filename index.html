@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>どんどん広がるマップ探検｜2Dプロトタイプ</title>
+  <title>どんどん広がるマップ探検｜安定版プロトタイプ</title>
   <style>
     :root { --bg:#0b1020; --fg:#e6e8ef; --accent:#7dd3fc; --accent2:#a78bfa; --danger:#ef4444; }
     html,body { height:100%; }
     body { margin:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; display:grid; place-items:center; }
-    .wrap { width: min(100vw, 1000px); padding:16px; }
+    .wrap { width:min(100vw,1000px); padding:16px; }
     .card { background:#111832; border:1px solid #26314f; border-radius:16px; padding:12px; box-shadow:0 12px 30px rgba(0,0,0,.25); }
     #game { display:block; width:100%; height:auto; border-radius:12px; image-rendering: pixelated; background:#0a0f1f; outline:1px solid #223055; }
-
     .hud { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:8px; font-size:14px; color:#c7d2fe; }
     .hud .pill { background:#0f1530; border:1px solid #27305a; border-radius:999px; padding:6px 10px; }
     .hud .right { display:flex; gap:8px; align-items:center; }
-    .msg { margin-top:8px; min-height:20px; color:#a7f3d0; font-size:14px; }
+    .msg { margin-top:8px; min-height:20px; color:#a7f3d0; font-size:14px; white-space:pre-wrap; }
     .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0c1228; border:1px solid #253163; border-bottom-width:2px; padding:2px 6px; border-radius:6px; }
     .footer { margin-top:8px; font-size:12px; color:#93c5fd; opacity:.9; }
   </style>
@@ -24,18 +23,24 @@
   <div class="wrap card">
     <canvas id="game" width="960" height="540"></canvas>
     <div class="hud">
-      <div class="pill">操作: <span class="kbd">←→/A D</span> で移動、<span class="kbd">Z</span> または <span class="kbd">Space</span> でジャンプ、<span class="kbd">R</span> リスポーン</div>
+      <div class="pill">操作: <span class="kbd">←→/A D</span> 移動、<span class="kbd">Z/Space</span> ジャンプ、<span class="kbd">R</span> リスポーン</div>
       <div class="right">
         <div class="pill" id="progress">マップ拡張: 0/2</div>
         <div class="pill" id="hp">HP: ❤❤❤</div>
       </div>
     </div>
     <div class="msg" id="msg"></div>
-    <div class="footer">目的：光る「拡張コア」を集めてマップの範囲を広げよう。障害物（赤）は危険。旗でチェックポイント更新。</div>
+    <div class="footer">目的：光る「拡張コア」を集めてマップを広げよう。旗でチェックポイント更新。今はバグ少なめの安定版です。</div>
   </div>
 
 <script>
 (() => {
+  // ====== エラーハンドラ（画面に表示） ======
+  window.addEventListener('error', (e) => {
+    const el = document.getElementById('msg');
+    el.textContent = 'エラー: ' + e.message;
+  });
+
   // ====== 基本設定 ======
   const TILE = 32;            // タイルサイズ（px）
   const WORLD_W = 50;         // タイル幅
@@ -46,73 +51,56 @@
     {w:50, h:20},
   ];
 
-  // タイル記号: '.'=空, '#'=壁/床, '^'=トゲ, '*'=拡張コア, 'F'=旗(チェックポイント)
-  const EMPTY='.'; const SOLID='#'; const SPIKE='^'; const ITEM='*'; const FLAG='F';
+  // タイル記号
+  const EMPTY='.'; const SOLID='#'; const ITEM='*'; const FLAG='F';
 
   // ====== 画面/描画 ======
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
+  if (!ctx) { document.getElementById('msg').textContent = 'Canvasが使えません'; return; }
 
   // ====== 入力管理 ======
   const keys = new Set();
   window.addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); if(['arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault(); });
   window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-
-  const kDown = k => keys.has(k) || keys.has(k.toLowerCase());
-  const any = (...arr) => arr.some(k => kDown(k));
+  const any = (...arr) => arr.some(k => keys.has(k.toLowerCase()));
 
   // ====== ユーティリティ ======
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  // ====== マップ生成 ======
+  // ====== マップ生成（到達性重視でシンプル） ======
   function createWorld() {
     const m = Array.from({length: WORLD_H}, () => Array.from({length: WORLD_W}, () => EMPTY));
+    const set = (x,y,ch) => { if (x>=0&&y>=0&&x<WORLD_W&&y<WORLD_H) m[y][x]=ch; };
+    const fillRect = (x,y,w,h,ch) => { for(let j=0;j<h;j++)for(let i=0;i<w;i++) set(x+i,y+j,ch); };
 
-    const fillRect = (x,y,w,h,ch) => {
-      for(let j=0;j<h;j++) for(let i=0;i<w;i++) {
-        if (y+j>=0 && y+j<WORLD_H && x+i>=0 && x+i<WORLD_W) m[y+j][x+i] = ch;
-      }
-    };
-
-    // 大地（最下層）
+    // 最下層の地面
     fillRect(0, WORLD_H-1, WORLD_W, 1, SOLID);
 
-    // 初期エリア（高さ12まで届く床や壁）
-    fillRect(0, 11, 20, 1, SOLID);          // 初期床
-    fillRect(0, 0, 1, 12, SOLID);            // 左壁
-    // 右壁は設置しない（拡張前はバリアで制御）
+    // --- 初期エリア（0段階）---
+    // 平らな床と簡単な階段
+    fillRect(0, 11, 20, 1, SOLID);
+    set(5,10,SOLID); set(6,10,SOLID); // 小段
+    set(10,9,SOLID); set(11,9,SOLID); set(12,9,SOLID);
+    set(15,10,SOLID); set(16,10,SOLID);
 
-    // 初期エリア内の足場
-    fillRect(5, 9, 3, 1, SOLID);
-    fillRect(9, 8, 3, 1, SOLID);$1    // コア近くに足場を追加して到達しやすくする
-    fillRect(16, 10, 2, 1, SOLID);
+    // 旗＆コア
+    set(2,10,FLAG);
+    set(18,10,ITEM); // 1個目（必ず届く）
 
-    // トゲ
-    m[11][10] = SPIKE; m[11][11] = SPIKE; m[11][12] = SPIKE;
+    // --- 1段階目エリア（20..35, 高さ15まで）---
+    fillRect(20, 14, 15, 1, SOLID);           // メイン床
+    set(22,13,SOLID); set(23,13,SOLID);       // 小段
+    set(26,12,SOLID); set(27,12,SOLID); set(28,12,SOLID);
+    set(31,13,SOLID); set(32,13,SOLID);
+    set(21,13,FLAG);
+    set(33,13,ITEM); // 2個目
 
-    // 旗（チェックポイント）
-    m[10][2] = FLAG; // 初期近く
-
-    // 初回拡張コア（初期エリア右寄り）
-    m[10][18] = ITEM;
-
-    // 2段階目エリアの地形
-    fillRect(20, 14, 15, 1, SOLID);         // 床
-    // 2段階目の縦壁は撤去（拡張前はバリアで制御）
-    fillRect(22, 13, 3, 1, SOLID);$1    // 右へ抜けるための連続足場
-    fillRect(30, 13, 2, 1, SOLID);
-    fillRect(32, 13, 1, 1, SOLID);
-
-    // 2段階目の旗とトゲ
-    m[13][21] = FLAG; m[14][28] = SPIKE; m[14][29] = SPIKE;
-
-    // 2回目の拡張コア
-    m[13][33] = ITEM;
-
-    // フルマップ領域（3段階目）に少しだけ足場
-    fillRect(37, 17, 5, 1, SOLID);
-    fillRect(43, 16, 3, 1, SOLID);
+    // --- 2段階目エリア（35..50, 高さ20まで）---
+    fillRect(37, 17, 6, 1, SOLID);
+    fillRect(44, 16, 3, 1, SOLID);
+    set(46,15,SOLID);
 
     return m;
   }
@@ -125,38 +113,18 @@
   const state = {
     hp: 3,
     spawn: {x: TILE*3, y: TILE*9},
-    msg: '光るコアを取って右へ進もう！',
-    msgTimer: 180,
+    msg: '光るコアを取ると右下にあるバリアが下がっていくよ！',
+    msgTimer: 240,
   };
 
-  const player = {
-    x: state.spawn.x,
-    y: state.spawn.y,
-    w: 26, h: 28,
-    vx: 0, vy: 0,
-    onGround: false,
-    facing: 1,
-  };
+  const player = { x: state.spawn.x, y: state.spawn.y, w: 26, h: 28, vx: 0, vy: 0, onGround: false, facing: 1 };
 
-  // ====== 便利：タイル取得/判定 ======
-  function tileAt(tx, ty) {
-    if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return SOLID; // 世界の外は壁
-    return world[ty][tx];
-  }
-  function isSolidTile(t) { return t === SOLID; }
-  function isHazardTile(t) { return t === SPIKE; }
-  function isItemTile(t) { return t === ITEM; }
-  function isFlagTile(t) { return t === FLAG; }
+  // ====== タイル判定 ======
+  function tileAt(tx, ty) { if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return SOLID; return world[ty][tx]; }
+  function isSolid(t) { return t === SOLID; }
+  function isItem(t) { return t === ITEM; }
+  function isFlag(t) { return t === FLAG; }
 
-  // 解放境界（右端/下端）は一時的な不可視バリアとして扱う
-  function solidAtPixel(px, py) {
-    const tx = Math.floor(px / TILE);
-    const ty = Math.floor(py / TILE);
-    if (tx >= unlocked.w || ty >= unlocked.h) return true; // バリア
-    return isSolidTile(tileAt(tx, ty));
-  }
-
-  // AABB衝突チェック（タイル）
   function collideX() {
     const left = Math.floor((player.x - player.w/2) / TILE);
     const right = Math.floor((player.x + player.w/2) / TILE);
@@ -166,17 +134,15 @@
     if (player.vx > 0) {
       const nx = Math.floor((player.x + player.w/2 + player.vx) / TILE);
       for (let ty=top; ty<=bottom; ty++) {
-        if (nx >= unlocked.w || ty >= unlocked.h || isSolidTile(tileAt(nx, ty))) {
-          player.x = nx * TILE - player.w/2 - 0.01;
-          player.vx = 0; break;
+        if (nx >= unlocked.w || ty >= unlocked.h || isSolid(tileAt(nx, ty))) {
+          player.x = nx * TILE - player.w/2 - 0.01; player.vx = 0; break;
         }
       }
     } else if (player.vx < 0) {
       const nx = Math.floor((player.x - player.w/2 + player.vx) / TILE);
       for (let ty=top; ty<=bottom; ty++) {
-        if (nx < 0 || ty >= unlocked.h || isSolidTile(tileAt(nx, ty))) {
-          player.x = (nx+1) * TILE + player.w/2 + 0.01;
-          player.vx = 0; break;
+        if (nx < 0 || ty >= unlocked.h || isSolid(tileAt(nx, ty))) {
+          player.x = (nx+1) * TILE + player.w/2 + 0.01; player.vx = 0; break;
         }
       }
     }
@@ -189,24 +155,21 @@
     if (player.vy > 0) {
       const ny = Math.floor((player.y + player.h/2 + player.vy) / TILE);
       for (let tx=left; tx<=right; tx++) {
-        if (ny >= unlocked.h || tx >= unlocked.w || isSolidTile(tileAt(tx, ny))) {
-          player.y = ny * TILE - player.h/2 - 0.01;
-          player.vy = 0; player.onGround = true; return;
+        if (ny >= unlocked.h || tx >= unlocked.w || isSolid(tileAt(tx, ny))) {
+          player.y = ny * TILE - player.h/2 - 0.01; player.vy = 0; player.onGround = true; return;
         }
       }
     } else if (player.vy < 0) {
       const ny = Math.floor((player.y - player.h/2 + player.vy) / TILE);
       for (let tx=left; tx<=right; tx++) {
-        if (ny < 0 || tx >= unlocked.w || isSolidTile(tileAt(tx, ny))) {
-          player.y = (ny+1) * TILE + player.h/2 + 0.01;
-          player.vy = 0; return;
+        if (ny < 0 || tx >= unlocked.w || isSolid(tileAt(tx, ny))) {
+          player.y = (ny+1) * TILE + player.h/2 + 0.01; player.vy = 0; return;
         }
       }
     }
     player.onGround = false;
   }
 
-  // ハザード/アイテム/旗の処理
   function overlapTiles(cb) {
     const l = Math.floor((player.x - player.w/2) / TILE);
     const r = Math.floor((player.x + player.w/2) / TILE);
@@ -215,210 +178,131 @@
     for (let ty=t; ty<=b; ty++) for (let tx=l; tx<=r; tx++) cb(tx,ty,tileAt(tx,ty));
   }
 
-  function takeDamage() {
-    state.hp = Math.max(0, state.hp - 1);
-    flash('#3b0a0a');
-    if (state.hp <= 0) respawn();
-  }
-
   function respawn() {
-    player.x = state.spawn.x; player.y = state.spawn.y;
-    player.vx = 0; player.vy = 0; state.hp = 3;
-    state.msg = 'リスポーン'; state.msgTimer = 90;
+    player.x = state.spawn.x; player.y = state.spawn.y; player.vx = 0; player.vy = 0; state.hp = 3; showMsg('リスポーン', 90);
   }
 
   function expandWorld() {
-    expansion = Math.min(expansion + 1, EXPANSION_STEPS.length - 1);
-    unlocked = {...EXPANSION_STEPS[expansion]};
-    document.getElementById('progress').textContent = `マップ拡張: ${expansion}/${EXPANSION_STEPS.length-1}`;
-    flash('#08333b');
-    state.msg = '新しいエリアが解放された！';
-    state.msgTimer = 160;
+    if (expansion >= EXPANSION_STEPS.length-1) return;
+    expansion += 1; unlocked = {...EXPANSION_STEPS[expansion]};
+    showMsg('新しいエリアが解放された！', 120);
+    updateHUD();
   }
 
-  // ====== 見た目系（描画） ======
-  let flashTimer = 0; let flashColor = '#000';
-  function flash(c) { flashColor = c; flashTimer = 18; }
-
-  function drawTile(x, y, t) {
-    const px = x*TILE - cam.x, py = y*TILE - cam.y;
-    if (t === SOLID) {
-      // レンガっぽい床
-      ctx.fillStyle = '#1b2446'; ctx.fillRect(px, py, TILE, TILE);
-      ctx.fillStyle = '#28315f'; ctx.fillRect(px+2, py+2, TILE-4, TILE-8);
-      ctx.fillStyle = '#101735'; ctx.fillRect(px+2, py+TILE-6, TILE-4, 4);
-    } else if (t === SPIKE) {
-      ctx.fillStyle = '#210b0b'; ctx.fillRect(px, py, TILE, TILE);
-      ctx.fillStyle = '#ef4444';
-      // 三角トゲ
-      ctx.beginPath(); ctx.moveTo(px, py+TILE); ctx.lineTo(px+TILE/2, py+4); ctx.lineTo(px+TILE, py+TILE); ctx.closePath(); ctx.fill();
-    } else if (t === ITEM) {
-      // 光るオーブ
-      const cx = px + TILE/2, cy = py + TILE/2;
-      const r = 6 + Math.sin(tick/10)*2;
-      const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, 14);
-      grad.addColorStop(0, '#7dd3fc'); grad.addColorStop(1, 'rgba(125,211,252,0)');
-      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#93c5fd'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
-    } else if (t === FLAG) {
-      // 旗
-      ctx.fillStyle = '#2d3a6a'; ctx.fillRect(px+14, py+2, 2, TILE-4);
-      ctx.fillStyle = '#a78bfa'; ctx.beginPath(); ctx.moveTo(px+16, py+6); ctx.lineTo(px+16+12, py+10); ctx.lineTo(px+16, py+14); ctx.closePath(); ctx.fill();
-    }
-  }
-
-  function drawBarrier() {
-    if (expansion >= EXPANSION_STEPS.length-1) return; // フル解放時は描かない
-    const bx = unlocked.w*TILE - cam.x; // 右境界
-    const by = unlocked.h*TILE - cam.y; // 下境界
-
-    // 右境界の発光
-    ctx.save();
-    ctx.globalAlpha = 0.35; ctx.fillStyle = '#60a5fa';
-    ctx.fillRect(bx-3, -1000, 6, 2000);
-    // 下境界の発光
-    ctx.fillRect(-1000, by-3, 2000, 6);
-    ctx.restore();
-  }
-
-  function drawPlayer() {
-    const px = Math.round(player.x - cam.x), py = Math.round(player.y - cam.y);
-    // 影
-    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px-12, py+player.h/2-2, 24, 4);
-    // 本体
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillRect(px - player.w/2, py - player.h/2, player.w, player.h);
-    // 顔向き
-    ctx.fillStyle = '#111827';
-    const eyeX = px + (player.facing>0?4:-8); const eyeY = py - 6;
-    ctx.fillRect(eyeX, eyeY, 4, 4);
-  }
-
-  function drawMinimap() {
-    const ww = 180, hh = 72; // minimapサイズ
-    const x = W - ww - 12, y = 12;
-    ctx.save();
-    ctx.globalAlpha = 0.95;
-    ctx.fillStyle = 'rgba(12, 18, 40, .8)'; ctx.fillRect(x, y, ww, hh);
-    ctx.strokeStyle = '#27305a'; ctx.strokeRect(x+0.5, y+0.5, ww-1, hh-1);
-
-    const sx = ww-16, sy = hh-16; // 内側領域
-    const ox = x+8, oy = y+8;
-
-    // フルサイズ矩形
-    ctx.fillStyle = '#1f2a54'; ctx.fillRect(ox, oy, sx, sy);
-    // 解放領域
-    ctx.fillStyle = '#354981';
-    ctx.fillRect(ox, oy, sx*(unlocked.w/WORLD_W), sy*(unlocked.h/WORLD_H));
-    // プレイヤー
-    ctx.fillStyle = '#7dd3fc';
-    ctx.fillRect(ox + sx*(player.x/(WORLD_W*TILE)) - 2, oy + sy*(player.y/(WORLD_H*TILE)) - 2, 4, 4);
-
-    ctx.restore();
-  }
-
-  function drawMsg() {
-    const el = document.getElementById('msg');
-    if (state.msgTimer > 0) {
-      el.textContent = state.msg; state.msgTimer--; 
-    } else {
-      el.textContent = '';
-    }
-  }
-
-  // ====== カメラ ======
+  // ====== 描画 ======
   const cam = { x:0, y:0 };
   function updateCamera() {
-    const targetX = player.x - W/2;
-    const targetY = player.y - H/2;
+    const targetX = player.x - W/2; const targetY = player.y - H/2;
     const maxX = unlocked.w*TILE - W; const maxY = unlocked.h*TILE - H;
     cam.x = clamp(targetX, 0, Math.max(0, maxX));
     cam.y = clamp(targetY, 0, Math.max(0, maxY));
   }
 
+  function drawTile(x, y, t) {
+    const px = x*TILE - cam.x, py = y*TILE - cam.y;
+    if (t === SOLID) {
+      ctx.fillStyle = '#1b2446'; ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = '#28315f'; ctx.fillRect(px+2, py+2, TILE-4, TILE-8);
+      ctx.fillStyle = '#101735'; ctx.fillRect(px+2, py+TILE-6, TILE-4, 4);
+    } else if (t === ITEM) {
+      const cx = px + TILE/2, cy = py + TILE/2; const r = 6 + Math.sin(tick/10)*2;
+      const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, 14);
+      grad.addColorStop(0, '#7dd3fc'); grad.addColorStop(1, 'rgba(125,211,252,0)');
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#93c5fd'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    } else if (t === FLAG) {
+      ctx.fillStyle = '#2d3a6a'; ctx.fillRect(px+14, py+2, 2, TILE-4);
+      ctx.fillStyle = '#a78bfa'; ctx.beginPath(); ctx.moveTo(px+16, py+6); ctx.lineTo(px+28, py+10); ctx.lineTo(px+16, py+14); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  function drawBarrier() {
+    if (expansion >= EXPANSION_STEPS.length-1) return;
+    const bx = unlocked.w*TILE - cam.x; const by = unlocked.h*TILE - cam.y;
+    ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = '#60a5fa';
+    ctx.fillRect(bx-3, -1000, 6, 2000); ctx.fillRect(-1000, by-3, 2000, 6); ctx.restore();
+  }
+
+  function drawPlayer() {
+    const px = Math.round(player.x - cam.x), py = Math.round(player.y - cam.y);
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px-12, py+player.h/2-2, 24, 4);
+    ctx.fillStyle = '#e5e7eb'; ctx.fillRect(px - player.w/2, py - player.h/2, player.w, player.h);
+    ctx.fillStyle = '#111827'; const eyeX = px + (player.facing>0?4:-8), eyeY = py - 6; ctx.fillRect(eyeX, eyeY, 4, 4);
+  }
+
+  function drawMinimap() {
+    const ww = 180, hh = 72; const x = W - ww - 12, y = 12;
+    ctx.save(); ctx.globalAlpha = 0.95; ctx.fillStyle = 'rgba(12, 18, 40, .8)'; ctx.fillRect(x, y, ww, hh);
+    ctx.strokeStyle = '#27305a'; ctx.strokeRect(x+0.5, y+0.5, ww-1, hh-1);
+    const sx = ww-16, sy = hh-16; const ox = x+8, oy = y+8;
+    ctx.fillStyle = '#1f2a54'; ctx.fillRect(ox, oy, sx, sy);
+    ctx.fillStyle = '#354981'; ctx.fillRect(ox, oy, sx*(unlocked.w/WORLD_W), sy*(unlocked.h/WORLD_H));
+    ctx.fillStyle = '#7dd3fc'; ctx.fillRect(ox + sx*(player.x/(WORLD_W*TILE)) - 2, oy + sy*(player.y/(WORLD_H*TILE)) - 2, 4, 4);
+    ctx.restore();
+  }
+
+  // ====== UI ======
+  function showMsg(text, t=120) { state.msg = text; state.msgTimer = t; }
+  function drawMsg() { const el = document.getElementById('msg'); if (state.msgTimer>0){ el.textContent = state.msg; state.msgTimer--; } else el.textContent=''; }
+  function updateHUD(){ const p = document.getElementById('progress'); if(p) p.textContent = `マップ拡張: ${expansion}/${EXPANSION_STEPS.length-1}`; const hpEl=document.getElementById('hp'); if(hpEl) hpEl.textContent = 'HP: ' + '❤'.repeat(state.hp); }
+
   // ====== メインループ ======
   let last = 0, tick = 0;
   function loop(ts) {
-    const dt = Math.min(33, ts - last); last = ts; tick++;
+    try {
+      const dt = Math.min(33, ts - last); last = ts; tick++;
 
-    // 入力
-    const L = any('arrowleft','a');
-    const R = any('arrowright','d');
-    const JUMP = any('z',' ');
+      // 入力
+      const L = any('arrowleft','a'); const R = any('arrowright','d'); const JUMP = any('z',' ');
 
-    // 水平移動
-    const accel = 0.4, maxVx = 3.2, friction = 0.80;
-    if (L) { player.vx -= accel; player.facing = -1; }
-    if (R) { player.vx += accel; player.facing = 1; }
-    if (!L && !R) player.vx *= friction;
-    player.vx = clamp(player.vx, -maxVx, maxVx);
+      // 水平移動
+      const accel = 0.45, maxVx = 3.0, friction = 0.82;
+      if (L) { player.vx -= accel; player.facing = -1; }
+      if (R) { player.vx += accel; player.facing = 1; }
+      if (!L && !R) player.vx *= friction;
+      player.vx = clamp(player.vx, -maxVx, maxVx);
 
-    // 重力/ジャンプ
-    const g = 0.55, jumpV = -9.2, maxVy = 12;
-    player.vy += g; player.vy = Math.min(player.vy, maxVy);
-    if (JUMP && player.onGround) { player.vy = jumpV; player.onGround = false; }
+      // 重力/ジャンプ
+      const g = 0.55, jumpV = -9.0, maxVy = 12;
+      player.vy += g; player.vy = Math.min(player.vy, maxVy);
+      if (JUMP && player.onGround) { player.vy = jumpV; player.onGround = false; }
 
-    // 移動＆衝突
-    player.x += player.vx; collideX();
-    player.y += player.vy; collideY();
+      // 移動＆衝突
+      player.x += player.vx; collideX();
+      player.y += player.vy; collideY();
 
-    // ハザード/アイテム/旗判定
-    let picked = false;
-    overlapTiles((tx,ty,t) => {
-      if (ty >= unlocked.h || tx >= unlocked.w) return; // ロック外は無視
-      if (isHazardTile(t)) { takeDamage(); }
-      if (isItemTile(t)) { world[ty][tx] = EMPTY; picked = true; }
-      if (isFlagTile(t)) { state.spawn.x = tx*TILE + TILE/2; state.spawn.y = ty*TILE; }
-    });
-    if (picked) {
-      expandWorld();
+      // アイテム/旗
+      let picked = false;
+      overlapTiles((tx,ty,t) => {
+        if (ty >= unlocked.h || tx >= unlocked.w) return;
+        if (isItem(t)) { world[ty][tx] = EMPTY; picked = true; }
+        if (isFlag(t)) { state.spawn.x = tx*TILE + TILE/2; state.spawn.y = ty*TILE; }
+      });
+      if (picked) expandWorld();
+
+      if (keys.has('r')) { respawn(); keys.delete('r'); }
+
+      // カメラ
+      updateCamera();
+
+      // 背景
+      ctx.clearRect(0,0,W,H);
+      const bg = ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#081127'); bg.addColorStop(1,'#0c1021'); ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+      // タイル描画（可視範囲のみ）
+      const x0 = Math.floor(cam.x / TILE), y0 = Math.floor(cam.y / TILE);
+      const x1 = Math.ceil((cam.x + W) / TILE), y1 = Math.ceil((cam.y + H) / TILE);
+      for (let y=y0; y<y1; y++) for (let x=x0; x<x1; x++) { const t = (x>=0&&y>=0&&x<WORLD_W&&y<WORLD_H)?world[y][x]:SOLID; if (t!==EMPTY) drawTile(x,y,t); }
+
+      drawBarrier(); drawPlayer(); drawMinimap(); updateHUD(); drawMsg();
+    } catch(err) {
+      document.getElementById('msg').textContent = '実行エラー: ' + err.message;
     }
-
-    if (keys.has('r')) { respawn(); keys.delete('r'); }
-
-    // カメラ
-    updateCamera();
-
-    // 描画
-    ctx.clearRect(0,0,W,H);
-    // 背景グラデ
-    const bg = ctx.createLinearGradient(0,0,0,H);
-    bg.addColorStop(0, '#081127'); bg.addColorStop(1, '#0c1021');
-    ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
-
-    // タイル描画（可視範囲のみ）
-    const x0 = Math.floor(cam.x / TILE), y0 = Math.floor(cam.y / TILE);
-    const x1 = Math.ceil((cam.x + W) / TILE), y1 = Math.ceil((cam.y + H) / TILE);
-    for (let y=y0; y<y1; y++) {
-      for (let x=x0; x<x1; x++) {
-        const t = (x>=0 && y>=0 && x<WORLD_W && y<WORLD_H) ? world[y][x] : SOLID;
-        if (t !== EMPTY) drawTile(x,y,t);
-      }
-    }
-
-    // 境界の発光
-    drawBarrier();
-    // プレイヤー
-    drawPlayer();
-    // ミニマップ
-    drawMinimap();
-
-    // フラッシュ
-    if (flashTimer > 0) {
-      ctx.save(); ctx.globalAlpha = flashTimer/18 * 0.35; ctx.fillStyle = flashColor; ctx.fillRect(0,0,W,H); ctx.restore();
-      flashTimer--;
-    }
-
-    // UI
-    document.getElementById('hp').textContent = 'HP: ' + '❤'.repeat(state.hp) + ' '.repeat(3-state.hp);
-    drawMsg();
-
     requestAnimationFrame(loop);
   }
 
-  // 初期化メッセージ
-  document.getElementById('progress').textContent = `マップ拡張: ${expansion}/${EXPANSION_STEPS.length-1}`;
-  requestAnimationFrame(loop);
+  // 初期化
+  updateHUD(); requestAnimationFrame(loop);
 })();
 </script>
 </body>
