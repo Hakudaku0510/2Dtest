@@ -81,12 +81,12 @@
     // 初期エリア（高さ12まで届く床や壁）
     fillRect(0, 11, 20, 1, SOLID);          // 初期床
     fillRect(0, 0, 1, 12, SOLID);            // 左壁
-    fillRect(19, 0, 1, 12, SOLID);           // 右壁（初期エリア右端）
+    // 右壁は設置しない（拡張前はバリアで制御）
 
     // 初期エリア内の足場
     fillRect(5, 9, 3, 1, SOLID);
-    fillRect(9, 8, 3, 1, SOLID);
-    fillRect(13, 7, 3, 1, SOLID);
+    fillRect(9, 8, 3, 1, SOLID);$1    // コア近くに足場を追加して到達しやすくする
+    fillRect(16, 10, 2, 1, SOLID);
 
     // トゲ
     m[11][10] = SPIKE; m[11][11] = SPIKE; m[11][12] = SPIKE;
@@ -99,9 +99,10 @@
 
     // 2段階目エリアの地形
     fillRect(20, 14, 15, 1, SOLID);         // 床
-    fillRect(34, 12, 1, 3, SOLID);          // 右縦壁
-    fillRect(22, 13, 3, 1, SOLID);
-    fillRect(27, 12, 3, 1, SOLID);
+    // 2段階目の縦壁は撤去（拡張前はバリアで制御）
+    fillRect(22, 13, 3, 1, SOLID);$1    // 右へ抜けるための連続足場
+    fillRect(30, 13, 2, 1, SOLID);
+    fillRect(32, 13, 1, 1, SOLID);
 
     // 2段階目の旗とトゲ
     m[13][21] = FLAG; m[14][28] = SPIKE; m[14][29] = SPIKE;
