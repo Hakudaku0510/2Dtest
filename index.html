@@ -286,7 +286,7 @@
     player.vx = clamp(player.vx, -maxVx, maxVx);
 
     // 重力/ジャンプ
-    const g = 0.55, jumpV = -9.0, maxVy = 12;
+    const g = 0.55, jumpV = -12.5, maxVy = 12;
     player.vy += g; player.vy = Math.min(player.vy, maxVy);
     if (JUMP && player.onGround) { player.vy = jumpV; player.onGround = false; }
 
