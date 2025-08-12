@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>どんどん広がるマップ探検｜安定版プロトタイプ</title>
+  <title>どんどん広がるマップ探検｜拡張＆スムーズカメラ版</title>
   <style>
     :root { --bg:#0b1020; --fg:#e6e8ef; --accent:#7dd3fc; --accent2:#a78bfa; --danger:#ef4444; }
     html,body { height:100%; }
     body { margin:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; display:grid; place-items:center; }
-    .wrap { width:min(100vw,1000px); padding:16px; }
+    .wrap { width:min(100vw,1100px); padding:16px; }
     .card { background:#111832; border:1px solid #26314f; border-radius:16px; padding:12px; box-shadow:0 12px 30px rgba(0,0,0,.25); }
     #game { display:block; width:100%; height:auto; border-radius:12px; image-rendering: pixelated; background:#0a0f1f; outline:1px solid #223055; }
     .hud { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:8px; font-size:14px; color:#c7d2fe; }
@@ -25,12 +25,12 @@
     <div class="hud">
       <div class="pill">操作: <span class="kbd">←→/A D</span> 移動、<span class="kbd">Z/Space</span> ジャンプ、<span class="kbd">R</span> リスポーン</div>
       <div class="right">
-        <div class="pill" id="progress">マップ拡張: 0/2</div>
+        <div class="pill" id="progress">マップ拡張: 0/3</div>
         <div class="pill" id="hp">HP: ❤❤❤</div>
       </div>
     </div>
     <div class="msg" id="msg"></div>
-    <div class="footer">目的：光る「拡張コア」を集めてマップを広げよう。旗でチェックポイント更新。今はバグ少なめの安定版です。</div>
+    <div class="footer">目的：光る「拡張コア」を拾ってマップを広げよう。拡張時はカメラがゆっくり追従（瞬間移動しません）。赤いトゲに注意！</div>
   </div>
 
 <script>
@@ -43,16 +43,17 @@
 
   // ====== 基本設定 ======
   const TILE = 32;            // タイルサイズ（px）
-  const WORLD_W = 50;         // タイル幅
-  const WORLD_H = 20;         // タイル高さ
-  const EXPANSION_STEPS = [   // 各段階の解放サイズ（タイル）
-    {w:20, h:12},
-    {w:35, h:15},
-    {w:50, h:20},
+  const WORLD_W = 80;         // タイル幅（拡張）
+  const WORLD_H = 24;         // タイル高さ（拡張）
+  const EXPANSION_STEPS = [   // 各段階の解放サイズ（タイル） 0..3
+    {w:22, h:12},
+    {w:40, h:16},
+    {w:60, h:20},
+    {w:80, h:24},
   ];
 
   // タイル記号
-  const EMPTY='.'; const SOLID='#'; const ITEM='*'; const FLAG='F';
+  const EMPTY='.'; const SOLID='#'; const ITEM='*'; const FLAG='F'; const SPIKE='^';
 
   // ====== 画面/描画 ======
   const canvas = document.getElementById('game');
@@ -68,8 +69,9 @@
 
   // ====== ユーティリティ ======
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a,b,t) => a + (b-a)*t;
 
-  // ====== マップ生成（到達性重視でシンプル） ======
+  // ====== マップ生成（到達性重視） ======
   function createWorld() {
     const m = Array.from({length: WORLD_H}, () => Array.from({length: WORLD_W}, () => EMPTY));
     const set = (x,y,ch) => { if (x>=0&&y>=0&&x<WORLD_W&&y<WORLD_H) m[y][x]=ch; };
@@ -78,29 +80,47 @@
     // 最下層の地面
     fillRect(0, WORLD_H-1, WORLD_W, 1, SOLID);
 
-    // --- 初期エリア（0段階）---
-    // 平らな床と簡単な階段
-    fillRect(0, 11, 20, 1, SOLID);
-    set(5,10,SOLID); set(6,10,SOLID); // 小段
+    // --- 初期エリア（0..22 / h<=12）---
+    fillRect(0, 11, 22, 1, SOLID);          // メイン床
+    // 段差
+    set(5,10,SOLID); set(6,10,SOLID);
     set(10,9,SOLID); set(11,9,SOLID); set(12,9,SOLID);
     set(15,10,SOLID); set(16,10,SOLID);
-
     // 旗＆コア
     set(2,10,FLAG);
     set(18,10,ITEM); // 1個目（必ず届く）
+    // 軽いトゲ
+    set(12,11,SPIKE); set(13,11,SPIKE); set(14,11,SPIKE);
 
-    // --- 1段階目エリア（20..35, 高さ15まで）---
-    fillRect(20, 14, 15, 1, SOLID);           // メイン床
-    set(22,13,SOLID); set(23,13,SOLID);       // 小段
-    set(26,12,SOLID); set(27,12,SOLID); set(28,12,SOLID);
-    set(31,13,SOLID); set(32,13,SOLID);
-    set(21,13,FLAG);
-    set(33,13,ITEM); // 2個目
+    // --- 1段階目エリア（22..40 / h<=16）---
+    fillRect(22, 15, 18, 1, SOLID);
+    set(24,14,SOLID); set(25,14,SOLID);
+    set(28,13,SOLID); set(29,13,SOLID); set(30,13,SOLID);
+    set(34,14,SOLID); set(35,14,SOLID);
+    // トゲ地帯
+    for(let x=26;x<=27;x++) set(x,15,SPIKE);
+    for(let x=31;x<=32;x++) set(x,15,SPIKE);
+    set(23,14,FLAG);
+    set(38,13,ITEM); // 2個目
 
-    // --- 2段階目エリア（35..50, 高さ20まで）---
-    fillRect(37, 17, 6, 1, SOLID);
-    fillRect(44, 16, 3, 1, SOLID);
-    set(46,15,SOLID);
+    // --- 2段階目エリア（40..60 / h<=20）---
+    fillRect(40, 18, 20, 1, SOLID);
+    set(43,17,SOLID); set(44,17,SOLID);
+    set(47,16,SOLID); set(48,16,SOLID); set(49,16,SOLID);
+    set(53,17,SOLID); set(54,17,SOLID);
+    // トゲとちょいジャンプ
+    for(let x=45;x<=46;x++) set(x,18,SPIKE);
+    for(let x=50;x<=51;x++) set(x,18,SPIKE);
+    set(41,17,FLAG);
+    set(58,16,ITEM); // 3個目
+
+    // --- 3段階目エリア（60..80 / h<=24）---
+    fillRect(60, 21, 20, 1, SOLID);
+    fillRect(64, 20, 3, 1, SOLID);
+    fillRect(69, 19, 4, 1, SOLID);
+    fillRect(75, 18, 2, 1, SOLID);
+    for(let x=66;x<=68;x++) set(x,21,SPIKE);
+    set(62,20,FLAG);
 
     return m;
   }
@@ -108,23 +128,26 @@
   const world = createWorld();
 
   // ====== ゲーム状態 ======
-  let expansion = 0; // 0,1,2
+  let expansion = 0; // 0..3
   let unlocked = {...EXPANSION_STEPS[0]};
   const state = {
     hp: 3,
     spawn: {x: TILE*3, y: TILE*9},
-    msg: '光るコアを取ると右下にあるバリアが下がっていくよ！',
-    msgTimer: 240,
+    msg: '光るコアでマップ拡張。トゲに注意！',
+    msgTimer: 200,
+    inv: 0, // 無敵時間
   };
 
   const player = { x: state.spawn.x, y: state.spawn.y, w: 26, h: 28, vx: 0, vy: 0, onGround: false, facing: 1 };
 
   // ====== タイル判定 ======
   function tileAt(tx, ty) { if (tx < 0 || ty < 0 || tx >= WORLD_W || ty >= WORLD_H) return SOLID; return world[ty][tx]; }
-  function isSolid(t) { return t === SOLID; }
-  function isItem(t) { return t === ITEM; }
-  function isFlag(t) { return t === FLAG; }
+  const isSolid = t => t === SOLID;
+  const isItem  = t => t === ITEM;
+  const isFlag  = t => t === FLAG;
+  const isSpike = t => t === SPIKE;
 
+  // ====== 当たり判定 ======
   function collideX() {
     const left = Math.floor((player.x - player.w/2) / TILE);
     const right = Math.floor((player.x + player.w/2) / TILE);
@@ -178,24 +201,37 @@
     for (let ty=t; ty<=b; ty++) for (let tx=l; tx<=r; tx++) cb(tx,ty,tileAt(tx,ty));
   }
 
+  function takeDamage() {
+    if (state.inv > 0) return;
+    state.hp = Math.max(0, state.hp - 1);
+    state.inv = 60; // 1秒くらい
+    // ノックバック
+    player.vy = -7; player.vx += (player.facing>0? -3.5 : 3.5);
+    showMsg('ダメージ！', 40);
+    if (state.hp <= 0) respawn();
+  }
+
   function respawn() {
-    player.x = state.spawn.x; player.y = state.spawn.y; player.vx = 0; player.vy = 0; state.hp = 3; showMsg('リスポーン', 90);
+    player.x = state.spawn.x; player.y = state.spawn.y; player.vx = 0; player.vy = 0; state.hp = 3; state.inv = 40; showMsg('リスポーン', 60);
   }
 
   function expandWorld() {
     if (expansion >= EXPANSION_STEPS.length-1) return;
     expansion += 1; unlocked = {...EXPANSION_STEPS[expansion]};
+    cam.lockTimer = 40; // ★ 拡張時はカメラ固定してからスムーズ再開
     showMsg('新しいエリアが解放された！', 120);
     updateHUD();
   }
 
   // ====== 描画 ======
-  const cam = { x:0, y:0 };
+  const cam = { x:0, y:0, lockTimer: 0 };
   function updateCamera() {
-    const targetX = player.x - W/2; const targetY = player.y - H/2;
-    const maxX = unlocked.w*TILE - W; const maxY = unlocked.h*TILE - H;
-    cam.x = clamp(targetX, 0, Math.max(0, maxX));
-    cam.y = clamp(targetY, 0, Math.max(0, maxY));
+    if (cam.lockTimer > 0) { cam.lockTimer--; return; }
+    const targetX = clamp(player.x - W/2, 0, Math.max(0, unlocked.w*TILE - W));
+    const targetY = clamp(player.y - H/2, 0, Math.max(0, unlocked.h*TILE - H));
+    // スムーズ追従（瞬間移動しない）
+    cam.x = lerp(cam.x, targetX, 0.12);
+    cam.y = lerp(cam.y, targetY, 0.12);
   }
 
   function drawTile(x, y, t) {
@@ -213,6 +249,10 @@
     } else if (t === FLAG) {
       ctx.fillStyle = '#2d3a6a'; ctx.fillRect(px+14, py+2, 2, TILE-4);
       ctx.fillStyle = '#a78bfa'; ctx.beginPath(); ctx.moveTo(px+16, py+6); ctx.lineTo(px+28, py+10); ctx.lineTo(px+16, py+14); ctx.closePath(); ctx.fill();
+    } else if (t === SPIKE) {
+      ctx.fillStyle = '#210b0b'; ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath(); ctx.moveTo(px, py+TILE); ctx.lineTo(px+TILE/2, py+4); ctx.lineTo(px+TILE, py+TILE); ctx.closePath(); ctx.fill();
     }
   }
 
@@ -226,12 +266,13 @@
   function drawPlayer() {
     const px = Math.round(player.x - cam.x), py = Math.round(player.y - cam.y);
     ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(px-12, py+player.h/2-2, 24, 4);
-    ctx.fillStyle = '#e5e7eb'; ctx.fillRect(px - player.w/2, py - player.h/2, player.w, player.h);
+    ctx.fillStyle = state.inv>0 && (Math.floor(tick/4)%2===0) ? 'rgba(229,231,235,.5)' : '#e5e7eb';
+    ctx.fillRect(px - player.w/2, py - player.h/2, player.w, player.h);
     ctx.fillStyle = '#111827'; const eyeX = px + (player.facing>0?4:-8), eyeY = py - 6; ctx.fillRect(eyeX, eyeY, 4, 4);
   }
 
   function drawMinimap() {
-    const ww = 180, hh = 72; const x = W - ww - 12, y = 12;
+    const ww = 200, hh = 80; const x = W - ww - 12, y = 12;
     ctx.save(); ctx.globalAlpha = 0.95; ctx.fillStyle = 'rgba(12, 18, 40, .8)'; ctx.fillRect(x, y, ww, hh);
     ctx.strokeStyle = '#27305a'; ctx.strokeRect(x+0.5, y+0.5, ww-1, hh-1);
     const sx = ww-16, sy = hh-16; const ox = x+8, oy = y+8;
@@ -271,16 +312,18 @@
       player.x += player.vx; collideX();
       player.y += player.vy; collideY();
 
-      // アイテム/旗
+      // タイル効果
       let picked = false;
       overlapTiles((tx,ty,t) => {
         if (ty >= unlocked.h || tx >= unlocked.w) return;
         if (isItem(t)) { world[ty][tx] = EMPTY; picked = true; }
         if (isFlag(t)) { state.spawn.x = tx*TILE + TILE/2; state.spawn.y = ty*TILE; }
+        if (isSpike(t)) { takeDamage(); }
       });
       if (picked) expandWorld();
 
       if (keys.has('r')) { respawn(); keys.delete('r'); }
+      if (state.inv > 0) state.inv--;
 
       // カメラ
       updateCamera();
