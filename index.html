@@ -23,7 +23,7 @@
   <div class="wrap card">
     <canvas id="game" width="960" height="540"></canvas>
     <div class="hud">
-      <div class="pill">操作: <span class="kbd">←→/A D</span> 移動、<span class="kbd">Z/Space</span> ジャンプ、<span class="kbd">R</span> リスポーン</div>
+      <div class="pill">操作: <span class="kbd">←→/A D</span> 移動、<span class="kbd">Z/Space</span> ジャンプ（2段）、<span class="kbd">R</span> リスポーン</div>
       <div class="right">
         <div class="pill" id="dist">距離: 0m</div>
         <div class="pill" id="score">★ 0</div>
@@ -161,7 +161,7 @@
     msgTimer: 220,
   };
 
-  const player = { x: state.spawn.x, y: state.spawn.y, w: 26, h: 28, vx: 0, vy: 0, onGround: false, facing: 1 };
+  const player = { x: state.spawn.x, y: state.spawn.y, w: 26, h: 28, vx: 0, vy: 0, onGround: false, facing: 1, jumpCount: 2 };
 
   // ====== 衝突 ======
   function collideX(){
@@ -190,7 +190,7 @@
     if (player.vy > 0){
       const ny = Math.floor((player.y + player.h/2 + player.vy) / TILE);
       for (let tx=left; tx<=right; tx++) if (tileAt(tx, ny) === SOLID){
-        player.y = ny * TILE - player.h/2 - 0.01; player.vy = 0; player.onGround = true; return;
+        player.y = ny * TILE - player.h/2 - 0.01; player.vy = 0; player.onGround = true; player.jumpCount = 2; return;
       }
     } else if (player.vy < 0){
       const ny = Math.floor((player.y - player.h/2 + player.vy) / TILE);
@@ -227,7 +227,7 @@
   }
 
   function respawn(){
-    player.x = state.spawn.x; player.y = state.spawn.y; player.vx = 0; player.vy = 0; state.hp = 3; state.inv = 40; showMsg('リスポーン', 60);
+    player.x = state.spawn.x; player.y = state.spawn.y; player.vx = 0; player.vy = 0; player.jumpCount = 2; state.hp = 3; state.inv = 40; showMsg('リスポーン', 60);
   }
 
   // ====== カメラ ======
@@ -240,7 +240,7 @@
   }
 
   // ====== 描画 ======
-  let tick = 0, last = 0;
+  let tick = 0, last = 0, prevJump = false;
 
   function drawTile(x, y, t){
     const px = x*TILE - cam.x, py = y*TILE - cam.y;
@@ -288,7 +288,7 @@
     // 重力/ジャンプ
     const g = 0.55, jumpV = -12.5, maxVy = 12;
     player.vy += g; player.vy = Math.min(player.vy, maxVy);
-    if (JUMP && player.onGround) { player.vy = jumpV; player.onGround = false; }
+    if (JUMP && !prevJump && player.jumpCount > 0) { player.vy = jumpV; player.onGround = false; player.jumpCount--; }
 
     // 物理＆衝突
     player.x += player.vx; collideX();
@@ -332,6 +332,7 @@
     ctx.fillStyle = '#111827'; const eyeX = px + (player.facing>0?4:-8), eyeY = py - 6; ctx.fillRect(eyeX, eyeY, 4, 4);
 
     updateHUD(); drawMsg();
+    prevJump = JUMP;
     requestAnimationFrame(loop);
   }
 
